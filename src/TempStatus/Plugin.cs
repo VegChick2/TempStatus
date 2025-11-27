@@ -178,8 +178,8 @@ public partial class Plugin : BaseUnityPlugin
         scaler.referenceResolution = new Vector2(1920, 1080);
         scaler.matchWidthOrHeight = 0.5f;
         
-        // Add GraphicRaycaster
-        canvasObj.AddComponent<GraphicRaycaster>();
+        // Don't add GraphicRaycaster - we don't need interaction, just display
+        // This prevents blocking other UI elements
         
         // Create text GameObject as child of canvas
         var textObj = new GameObject("TempStatusText");
@@ -188,6 +188,8 @@ public partial class Plugin : BaseUnityPlugin
         // Add Text component
         statusText = textObj.AddComponent<Text>();
         statusText.text = GetDisplayTextWithTimestamp("Loading...");
+        // Disable raycast target so clicks pass through to other UI elements
+        statusText.raycastTarget = false;
         
         // Try to get a monospace font for proper alignment
         // Unity's built-in fonts: Arial (proportional), CourierNew (monospace)
@@ -332,7 +334,7 @@ public partial class Plugin : BaseUnityPlugin
                 else
                 {
                     // Affliction is not active - show as absent
-                    afflictionList.Add($"{baseAfflictionName} | N/A | N/A | N/A | N/A");
+                    // afflictionList.Add($"{baseAfflictionName} | N/A | N/A | N/A | N/A");
                 }
             }
             catch (System.Exception ex)
