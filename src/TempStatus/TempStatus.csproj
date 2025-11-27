@@ -29,8 +29,8 @@
   -->
 
   <ItemGroup>
-    <PackageReference Include="PEAKModding-PEAKLib_Core" Version="1.0.0" Private="False"/>
-    <PackageReference Include="PEAKModding-PEAKLib_UI" Version="1.1.1" Private="False"/>
+    <PackageReference Include="PEAKModding-PEAKLib_Core" Version="1.7.0" Private="False"/>
+    <PackageReference Include="PEAKModding-PEAKLib_UI" Version="1.6.1" Private="False"/>
   </ItemGroup>
 
 </Project>
