@@ -1,5 +1,4 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using BepInEx;
 using BepInEx.Logging;
@@ -7,7 +6,7 @@ using Peak.Afflictions;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-using static CharacterAfflictions;
+
 
 namespace TempStatus;
 
@@ -74,8 +73,8 @@ public partial class Plugin : BaseUnityPlugin
         }
         updateTimer = 0f;
         
-        // Find player CharacterAfflictions (needed to read status values)
-        var playerAfflictions = Object.FindFirstObjectByType<CharacterAfflictions>();
+        // Get player CharacterAfflictions from static localCharacter (optimized)
+        var playerAfflictions = Character.localCharacter?.refs?.afflictions;
         if (playerAfflictions == null)
         {
             if (statusText != null)
