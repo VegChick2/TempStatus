@@ -1,7 +1,9 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
+using HarmonyLib;
 using Peak.Afflictions;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -27,14 +29,40 @@ public partial class Plugin : BaseUnityPlugin
     private Text? statusText;
     private float updateTimer = 0f;
     private const float updateInterval = 0.1f; // Update 10 times per second
+    
+    // Configuration for fog distance visibility offset
+    private ConfigEntry<float>? distanceVisibilityOffsetConfig;
+    internal static float DistanceVisibilityOffset { get; private set; } = 30f;
+    private Harmony? harmony;
 
     private void Awake()
     {
         Log = Logger;
         Log.LogInfo($"Plugin {Name} is loaded!");
         
+        // Initialize configuration
+        distanceVisibilityOffsetConfig = Config.Bind(
+            "FogSettings",
+            "DistanceVisibilityOffset",
+            30f,
+            "Controls the _DistanceVisibilityOffset material property for fog spheres. Default: 30"
+        );
+        DistanceVisibilityOffset = distanceVisibilityOffsetConfig.Value;
+        
+        // Subscribe to config change events
+        distanceVisibilityOffsetConfig.SettingChanged += (sender, args) =>
+        {
+            DistanceVisibilityOffset = distanceVisibilityOffsetConfig.Value;
+            Log.LogInfo($"DistanceVisibilityOffset updated to: {DistanceVisibilityOffset}");
+        };
+        
+        // Apply Harmony patches
+        harmony = new Harmony(Info.Metadata.GUID);
+        harmony.PatchAll();
+        Log.LogInfo("Harmony patches applied!");
+        
         // Make sure the plugin GameObject persists across scene changes
-        Object.DontDestroyOnLoad(gameObject);
+        //Object.DontDestroyOnLoad(gameObject);
         
         // Subscribe to scene loaded events
         SceneManager.sceneLoaded += OnSceneLoaded;
@@ -358,10 +386,28 @@ public partial class Plugin : BaseUnityPlugin
         // Unsubscribe from scene events
         SceneManager.sceneLoaded -= OnSceneLoaded;
         
+        // Unpatch Harmony
+        harmony?.UnpatchSelf();
+        
         // Cleanup when plugin is unloaded
         if (canvasObj != null)
         {
             Object.Destroy(canvasObj);
+        }
+    }
+}
+
+// Harmony patch to add _DistanceVisibilityOffset control to FogSphere.SetSharderVars()
+[HarmonyPatch(typeof(FogSphere), nameof(FogSphere.SetSharderVars))]
+public static class FogSphereSetSharderVarsPatch
+{
+    static void Postfix(FogSphere __instance)
+    {
+        // Apply the _DistanceVisibilityOffset property after the original method sets other properties
+        if (__instance.mpb != null && __instance.rend != null)
+        {
+            __instance.mpb.SetFloat("_DistanceVisibilityOffset", Plugin.DistanceVisibilityOffset);
+            __instance.rend.SetPropertyBlock(__instance.mpb);
         }
     }
 }
