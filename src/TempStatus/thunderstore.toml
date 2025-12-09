@@ -7,7 +7,7 @@ repository = "https://thunderstore.io"
 [package]
 namespace = "VegChick2"
 name = "TempStatus"
-description = "TODO: Fill in short mod description."
+description = "This mod add a UI to show remaining time of temporary status like numb, blind, and lollipos remaining time and others. It also include a config to make Fog visible from a very far distance"
 websiteUrl = "" # TODO: Add a link to your mod repository here (optional)
 containsNsfwContent = false
 

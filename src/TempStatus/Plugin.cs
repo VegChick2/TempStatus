@@ -33,6 +33,14 @@ public partial class Plugin : BaseUnityPlugin
     // Configuration for fog distance visibility offset
     private ConfigEntry<float>? distanceVisibilityOffsetConfig;
     internal static float DistanceVisibilityOffset { get; private set; } = 30f;
+    
+    // Configuration for fog tint color
+    private ConfigEntry<float>? fogTintColorRConfig;
+    private ConfigEntry<float>? fogTintColorGConfig;
+    private ConfigEntry<float>? fogTintColorBConfig;
+    private ConfigEntry<float>? fogTintColorAConfig;
+    internal static Vector4 FogTintColor { get; private set; } = new Vector4(0.72067463f, 0.7391309f, 0.745283f, 0f);
+    
     private Harmony? harmony;
 
     private void Awake()
@@ -55,6 +63,41 @@ public partial class Plugin : BaseUnityPlugin
             DistanceVisibilityOffset = distanceVisibilityOffsetConfig.Value;
             Log.LogInfo($"DistanceVisibilityOffset updated to: {DistanceVisibilityOffset}");
         };
+        
+        // Initialize fog tint color configuration
+        fogTintColorRConfig = Config.Bind(
+            "FogSettings",
+            "FogTintColorR",
+            0.72067463f,
+            "Red component of _FogtintColor material property. Default: 0.72067463"
+        );
+        fogTintColorGConfig = Config.Bind(
+            "FogSettings",
+            "FogTintColorG",
+            0.7391309f,
+            "Green component of _FogtintColor material property. Default: 0.7391309"
+        );
+        fogTintColorBConfig = Config.Bind(
+            "FogSettings",
+            "FogTintColorB",
+            0.745283f,
+            "Blue component of _FogtintColor material property. Default: 0.745283"
+        );
+        fogTintColorAConfig = Config.Bind(
+            "FogSettings",
+            "FogTintColorA",
+            0f,
+            "Alpha component of _FogtintColor material property. Default: 0"
+        );
+        
+        // Update fog tint color from config
+        UpdateFogTintColor();
+        
+        // Subscribe to fog tint color config change events
+        fogTintColorRConfig.SettingChanged += (sender, args) => UpdateFogTintColor();
+        fogTintColorGConfig.SettingChanged += (sender, args) => UpdateFogTintColor();
+        fogTintColorBConfig.SettingChanged += (sender, args) => UpdateFogTintColor();
+        fogTintColorAConfig.SettingChanged += (sender, args) => UpdateFogTintColor();
         
         // Apply Harmony patches
         harmony = new Harmony(Info.Metadata.GUID);
@@ -381,6 +424,17 @@ public partial class Plugin : BaseUnityPlugin
         return System.Text.RegularExpressions.Regex.Replace(afflictionType, "([a-z])([A-Z])", "$1 $2");
     }
     
+    private void UpdateFogTintColor()
+    {
+        FogTintColor = new Vector4(
+            fogTintColorRConfig?.Value ?? 0.72067463f,
+            fogTintColorGConfig?.Value ?? 0.7391309f,
+            fogTintColorBConfig?.Value ?? 0.745283f,
+            fogTintColorAConfig?.Value ?? 0f
+        );
+        Log.LogInfo($"FogTintColor updated to: R={FogTintColor.x}, G={FogTintColor.y}, B={FogTintColor.z}, A={FogTintColor.w}");
+    }
+    
     private void OnDestroy()
     {
         // Unsubscribe from scene events
@@ -403,10 +457,11 @@ public static class FogSphereSetSharderVarsPatch
 {
     static void Postfix(FogSphere __instance)
     {
-        // Apply the _DistanceVisibilityOffset property after the original method sets other properties
+        // Apply custom material properties after the original method sets other properties
         if (__instance.mpb != null && __instance.rend != null)
         {
             __instance.mpb.SetFloat("_DistanceVisibilityOffset", Plugin.DistanceVisibilityOffset);
+            __instance.mpb.SetVector("_FogtintColor", Plugin.FogTintColor);
             __instance.rend.SetPropertyBlock(__instance.mpb);
         }
     }
