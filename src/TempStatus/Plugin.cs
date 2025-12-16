@@ -5,6 +5,7 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using Peak.Afflictions;
+using Photon.Pun;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
@@ -464,5 +465,206 @@ public static class FogSphereSetSharderVarsPatch
             __instance.mpb.SetVector("_FogtintColor", Plugin.FogTintColor);
             __instance.rend.SetPropertyBlock(__instance.mpb);
         }
+    }
+}
+
+// Harmony patch to set canBackpack = true for backpacks when they become Held
+[HarmonyPatch(typeof(Item), nameof(Item.SetState))]
+public static class ItemSetStatePatch
+{
+    static void Postfix(Item __instance, ItemState setState)
+    {
+        // When a backpack is held in hand, set canBackpack to true
+        if (setState == ItemState.Held && __instance is Backpack)
+        {
+            __instance.UIData.canBackpack = true;
+            Plugin.Log.LogInfo($"Set canBackpack = true for backpack {__instance.name}");
+        }
+    }
+}
+
+// Alternative: Patch Backpack.OnInstanceDataRecieved() to set canBackpack earlier
+// This catches it when the backpack is instantiated and receives data
+[HarmonyPatch(typeof(Backpack), nameof(Backpack.OnInstanceDataRecieved))]
+public static class BackpackOnInstanceDataRecievedPatch
+{
+    static void Postfix(Backpack __instance)
+    {
+        // Set canBackpack to true when backpack receives instance data
+        __instance.UIData.canBackpack = true;
+        Plugin.Log.LogInfo($"Set canBackpack = true for backpack {__instance.name} (OnInstanceDataRecieved)");
+    }
+}
+
+// Fix for race condition: Patch RPCAddItemToBackpack to temporarily inject prefab into BackpackSlot if needed
+[HarmonyPatch(typeof(Backpack), nameof(Backpack.RPCAddItemToBackpack))]
+public static class BackpackRPCAddItemToBackpackPatch
+{
+    static void Prefix(Backpack __instance, PhotonView playerView, byte slotID, byte backpackSlotID, ref bool __runOriginal)
+    {
+        // Check if this is the backpack slot (slotID == 3) and if it's empty or prefab is null
+        if (slotID == Player.BACKPACKSLOTINDEX)
+        {
+            ItemSlot itemSlot = playerView.GetComponent<Player>().GetItemSlot(slotID);
+            
+            // Check if this is a BackpackSlot that has a backpack but prefab is null (race condition)
+            if (itemSlot is BackpackSlot backpackSlot && backpackSlot.hasBackpack && backpackSlot.prefab == null)
+            {
+                // Get the prefab from ItemDatabase using the current item's itemID
+                // The current item should be the backpack being stashed
+                Player player = playerView.GetComponent<Player>();
+                Item currentItem = player.character?.data?.currentItem;
+                if (currentItem != null && currentItem is Backpack)
+                {
+                    Item prefab = null;
+                    if (ItemDatabase.TryGetItem(currentItem.itemID, out prefab))
+                    {
+                        // Temporarily inject prefab into BackpackSlot so original method can read it
+                        backpackSlot.prefab = prefab;
+                        Plugin.Log.LogInfo($"BackpackRPCAddItemToBackpack: Temporarily injected prefab {prefab.name} into BackpackSlot (slotID: {slotID})");
+                    }
+                }
+            }
+        }
+    }
+    
+    static void Postfix(Backpack __instance, PhotonView playerView, byte slotID, byte backpackSlotID)
+    {
+        // Restore BackpackSlot prefab to null if we injected it
+        if (slotID == Player.BACKPACKSLOTINDEX)
+        {
+            ItemSlot itemSlot = playerView.GetComponent<Player>().GetItemSlot(slotID);
+            
+            if (itemSlot is BackpackSlot backpackSlot && backpackSlot.prefab != null)
+            {
+                // Only restore if it was a Backpack (to avoid clearing legitimate prefabs)
+                if (backpackSlot.prefab is Backpack)
+                {
+                    Plugin.Log.LogInfo($"BackpackRPCAddItemToBackpack: Restored BackpackSlot prefab to null (slotID: {slotID})");
+                    backpackSlot.prefab = null;
+                }
+            }
+        }
+    }
+}
+
+// Patch BackpackData.AddItem to handle null prefab gracefully
+[HarmonyPatch(typeof(BackpackData), nameof(BackpackData.AddItem))]
+public static class BackpackDataAddItemPatch
+{
+    static bool Prefix(BackpackData __instance, Item prefab, ItemInstanceData data, byte backpackSlotID, ref bool __runOriginal)
+    {
+        // If prefab is null, this is likely due to the race condition
+        // Try to recover from cache if possible
+        if (prefab == null)
+        {
+            Plugin.Log.LogWarning($"BackpackData.AddItem: prefab is null for slot {backpackSlotID}. This indicates a race condition.");
+            
+            // Don't proceed with null prefab - it will cause NullReferenceException
+            __runOriginal = false;
+            return false;
+        }
+        
+        // Original method will handle the rest
+        return true;
+    }
+}
+
+// Fix for taking backpacks out from backpack wheel: Make them equip instead of opening wheel
+[HarmonyPatch(typeof(Backpack), nameof(Backpack.Interact))]
+public static class BackpackInteractPatch
+{
+    static bool Prefix(Backpack __instance, Character interactor, ref bool __runOriginal)
+    {
+        // If the backpack is in another backpack's slot (InBackpack state), equip it instead of opening wheel
+        if (__instance.itemState == ItemState.InBackpack && __instance.backpackReference.IsSome)
+        {
+            Plugin.Log.LogInfo($"BackpackInteract: Backpack is in another backpack, calling Wear() to equip it");
+            __instance.Wear(interactor);
+            __runOriginal = false;
+            return false;
+        }
+        
+        // Otherwise, let the original method open the wheel
+        return true;
+    }
+}
+
+// Fix for weight calculation: Recalculate entire weight including nested backpacks
+[HarmonyPatch(typeof(CharacterAfflictions), nameof(CharacterAfflictions.UpdateWeight))]
+public static class CharacterAfflictionsUpdateWeightPatch
+{
+    static void Postfix(CharacterAfflictions __instance)
+    {
+        // Recalculate the entire weight from scratch, including nested backpacks
+        // This avoids issues with SetStatus post-processing when trying to add to existing weight
+        int totalWeight = 0;
+        
+        // Count items in regular inventory slots
+        for (int index = 0; index < __instance.character.player.itemSlots.Length; ++index)
+        {
+            ItemSlot itemSlot = __instance.character.player.itemSlots[index];
+            if ((UnityEngine.Object) itemSlot.prefab != (UnityEngine.Object) null)
+                totalWeight += itemSlot.prefab.CarryWeight;
+        }
+        
+        // Count items in equipped backpack (including nested backpacks recursively)
+        BackpackSlot backpackSlot = __instance.character.player.backpackSlot;
+        if (!backpackSlot.IsEmpty() && backpackSlot.data.TryGetDataEntry<BackpackData>(DataEntryKey.BackpackData, out BackpackData backpackData))
+        {
+            // Count all items in the equipped backpack, including nested backpacks recursively
+            totalWeight += CalculateBackpackWeightRecursive(backpackData);
+        }
+        
+        // Count item in temp slot
+        ItemSlot tempSlot = __instance.character.player.GetItemSlot((byte) 250);
+        if (!tempSlot.IsEmpty())
+            totalWeight += tempSlot.prefab.CarryWeight;
+        
+        // Count carried player
+        if ((UnityEngine.Object) __instance.character.data.carriedPlayer != (UnityEngine.Object) null)
+            totalWeight += 8;
+        
+        // Count sticky items
+        foreach (StickyItemComponent stickyItemComponent in StickyItemComponent.ALL_STUCK_ITEMS)
+        {
+            if ((UnityEngine.Object) stickyItemComponent.stuckToCharacter == (UnityEngine.Object) __instance.character)
+            {
+                totalWeight += stickyItemComponent.addWeightToStuckPlayer;
+            }
+        }
+        
+        // Set the recalculated weight (this will overwrite what the original method set)
+        __instance.SetStatus(CharacterAfflictions.STATUSTYPE.Weight, 0.025f * (float) totalWeight, pushStatus: false);
+        Plugin.Log.LogInfo($"CharacterAfflictionsUpdateWeight: Recalculated total weight = {totalWeight} (including nested backpacks)");
+    }
+    
+    // Recursively calculate weight of ALL items inside a backpack (including items in nested backpacks)
+    // This function counts all items in the given backpack's data recursively
+    private static int CalculateBackpackWeightRecursive(BackpackData backpackData)
+    {
+        int totalWeight = 0;
+        
+        for (int index = 0; index < backpackData.itemSlots.Length; ++index)
+        {
+            ItemSlot itemSlot = backpackData.itemSlots[index];
+            if (!itemSlot.IsEmpty() && itemSlot.prefab != null)
+            {
+                // Add the item's weight
+                totalWeight += itemSlot.prefab.CarryWeight;
+                
+                // If this item is a backpack, recursively count items inside it
+                if (itemSlot.prefab is Backpack)
+                {
+                    if (itemSlot.data != null && itemSlot.data.TryGetDataEntry<BackpackData>(DataEntryKey.BackpackData, out BackpackData nestedBackpackData))
+                    {
+                        // Recursively calculate weight of items in this nested backpack
+                        totalWeight += CalculateBackpackWeightRecursive(nestedBackpackData);
+                    }
+                }
+            }
+        }
+        
+        return totalWeight;
     }
 }
